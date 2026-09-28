@@ -7,7 +7,7 @@ import type {
   AgentActionsEnrichment,
   AgentConfigurationType,
   AgentFavoriteEnrichment,
-  AgentRecentAuthors,
+  AgentLastAuthorsEnrichment,
   AgentTagsEnrichment,
   LightAgentConfigurationType,
 } from "@app/types/assistant/agent";
@@ -53,7 +53,7 @@ export async function enrichWithFavorites(
 export async function enrichWithRecentAuthors(
   auth: Authenticator,
   resources: AgentResource[]
-): Promise<Map<string, { lastAuthors: AgentRecentAuthors }>> {
+): Promise<Map<string, AgentLastAuthorsEnrichment>> {
   const recentAuthors = await getAgentsRecentAuthors({
     agents: resources,
     auth,
