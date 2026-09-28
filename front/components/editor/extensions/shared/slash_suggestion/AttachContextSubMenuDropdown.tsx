@@ -134,6 +134,8 @@ interface AttachContextSubMenuDropdownProps
 
 interface AttachContextSubMenuDropdownRef {
   onKeyDown: (props: { event: KeyboardEvent }) => boolean;
+  // Always provided; optional so a shared sub-menu ref keeps satisfying the type.
+  navigateUp?: () => boolean;
 }
 
 /**
@@ -323,6 +325,13 @@ export const AttachContextSubMenuDropdown = forwardRef<
           }
 
           return dropdownRef.current?.onKeyDown({ event }) ?? false;
+        },
+        navigateUp: () => {
+          if (!canNavigateUp) {
+            return false;
+          }
+          navigateUp();
+          return true;
         },
       }),
       [attachNode, canNavigateUp, navigateUp, onClose, query]
