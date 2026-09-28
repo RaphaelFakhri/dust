@@ -1241,4 +1241,150 @@ describe("applyBatchSuggestions", () => {
     expect(updated?.requestedSpaceIds).toEqual([restrictedSpace.sId]);
     expect(await fetchAgentSubAgentActions(agent.sId)).toEqual([]);
   });
+
+  it("adds a skill created in the same batch to an agent", async () => {
+    await grantSkillCreation();
+    const pendingRes = await SkillResource.createPending(auth);
+    assert(pendingRes.isOk());
+    const pending = pendingRes.value;
+    const agent = await AgentConfigurationFactory.createTestAgent(auth);
+    const { id: batchModelId, sId } =
+      await BatchSuggestionFactory.createEmpty(auth);
+    await SkillSuggestionFactory.create(auth, pending, {
+      kind: "create",
+      suggestion: SKILL_CREATION,
+      batchModelId,
+    });
+    await AgentSuggestionFactory.createSkills(auth, agent, {
+      suggestion: { action: "add", skillId: pending.sId },
+      source: "conversational",
+      batchModelId,
+    });
+
+    const res = await applyBatchSuggestions(auth, await fetchBatch(sId));
+
+    if (res.isErr()) {
+      throw res.error;
+    }
+    const created = await SkillResource.fetchById(auth, pending.sId);
+    expect(created?.status).toBe("active");
+    expect(await fetchAgentSkillIds(agent.sId)).toEqual([pending.sId]);
+  });
+
+  it("creates an agent with a skill created in the same batch", async () => {
+    await grantSkillCreation();
+    await grantWorkspacePermission(workspace, user, {
+      grantType: "create",
+      resourceType: "agent",
+    });
+    await auth.refresh();
+    const pendingRes = await SkillResource.createPending(auth);
+    assert(pendingRes.isOk());
+    const pending = pendingRes.value;
+    const agent = await createPendingAgent();
+    const { id: batchModelId, sId } =
+      await BatchSuggestionFactory.createEmpty(auth);
+    await SkillSuggestionFactory.create(auth, pending, {
+      kind: "create",
+      suggestion: SKILL_CREATION,
+      batchModelId,
+    });
+    await AgentSuggestionFactory.createCreate(auth, agent, {
+      suggestion: {
+        name: "NotesHelper",
+        description: "Takes meeting notes.",
+        instructions: "<p>Take notes.</p>",
+        skillIds: [pending.sId],
+      },
+      batchModelId,
+    });
+
+    const res = await applyBatchSuggestions(auth, await fetchBatch(sId));
+
+    if (res.isErr()) {
+      throw res.error;
+    }
+    expect(await fetchAgentSkillIds(agent.sId)).toEqual([pending.sId]);
+  });
+
+  it("adds an agent created in the same batch as a sub-agent named after it", async () => {
+    await grantWorkspacePermission(workspace, user, {
+      grantType: "create",
+      resourceType: "agent",
+    });
+    await auth.refresh();
+    const subAgent = await createPendingAgent();
+    const agent = await AgentConfigurationFactory.createTestAgent(auth);
+    const runAgentTool = await fetchRunAgentTool(auth);
+    assert(runAgentTool);
+    const { id: batchModelId, sId } =
+      await BatchSuggestionFactory.createEmpty(auth);
+    await AgentSuggestionFactory.createCreate(auth, subAgent, {
+      suggestion: {
+        name: "Pricing Helper",
+        description: "Answers pricing questions.",
+        instructions: "<p>Answer pricing questions.</p>",
+      },
+      batchModelId,
+    });
+    await AgentSuggestionFactory.createSubAgent(auth, agent, {
+      suggestion: {
+        action: "add",
+        toolId: runAgentTool.sId,
+        childAgentId: subAgent.sId,
+      },
+      source: "conversational",
+      batchModelId,
+    });
+
+    const res = await applyBatchSuggestions(auth, await fetchBatch(sId));
+
+    if (res.isErr()) {
+      throw res.error;
+    }
+    const created = await AgentResource.fetchById(auth, subAgent.sId);
+    expect(created?.status).toBe("active");
+    expect(await fetchAgentSubAgentActions(agent.sId)).toMatchObject([
+      { childAgentId: subAgent.sId, name: "run_pricing_helper" },
+    ]);
+  });
+
+  it("writes nothing when an added skill is pending and the batch does not create it", async () => {
+    await grantSkillCreation();
+    const pendingRes = await SkillResource.createPending(auth);
+    assert(pendingRes.isOk());
+    const agent = await AgentConfigurationFactory.createTestAgent(auth);
+    const { id: batchModelId, sId } =
+      await BatchSuggestionFactory.createEmpty(auth);
+    await AgentSuggestionFactory.createSkills(auth, agent, {
+      suggestion: { action: "add", skillId: pendingRes.value.sId },
+      source: "conversational",
+      batchModelId,
+    });
+
+    const res = await applyBatchSuggestions(auth, await fetchBatch(sId));
+
+    assert(res.isErr());
+    expect(res.error.message).toContain("invalid, archived or not accessible");
+    expect(await fetchAgentSkillIds(agent.sId)).toEqual([]);
+  });
+
+  it("writes nothing when an added sub-agent is pending and the batch does not create it", async () => {
+    await grantWorkspacePermission(workspace, user, {
+      grantType: "create",
+      resourceType: "agent",
+    });
+    await auth.refresh();
+    const subAgent = await createPendingAgent();
+    const agent = await AgentConfigurationFactory.createTestAgent(auth);
+
+    const res = await applySubAgentChange(agent, {
+      action: "add",
+      childAgentId: subAgent.sId,
+    });
+
+    assert(res.isErr());
+    expect(res.error.message).toContain("invalid or not accessible");
+    expect(await fetchAgentSubAgentActions(agent.sId)).toEqual([]);
+  });
 });

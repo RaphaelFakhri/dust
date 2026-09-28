@@ -1,5 +1,8 @@
 import { isAuthorizedToApplyAgentSuggestions } from "@app/lib/api/assistant/agent_suggestion_authorization";
-import type { ResolvedAgentChange } from "@app/lib/api/assistant/apply_agent_suggestions";
+import type {
+  BatchCreations,
+  ResolvedAgentChange,
+} from "@app/lib/api/assistant/apply_agent_suggestions";
 import {
   resolveAgentSuggestions,
   writeAgentChange,
@@ -20,6 +23,7 @@ import { SkillResource } from "@app/lib/resources/skill/skill_resource";
 import type { Result } from "@app/types/shared/result";
 import { Err, Ok } from "@app/types/shared/result";
 import { assertNever } from "@app/types/shared/utils/assert_never";
+import { isCreateAgentSuggestion } from "@app/types/suggestions/agent_suggestion";
 import assert from "assert";
 
 type ApplyBatchSuggestionsError = DustError<
@@ -162,7 +166,13 @@ async function resolveSkillStep(
 async function resolveAgentStep(
   auth: Authenticator,
   step: AgentStep,
-  agentsById: Map<string, AgentResource>
+  {
+    agentsById,
+    createdInBatch,
+  }: {
+    agentsById: Map<string, AgentResource>;
+    createdInBatch: BatchCreations;
+  }
 ): Promise<Result<ResolvedAgentStep, ApplyBatchSuggestionsError>> {
   const agent = agentsById.get(step.agentId);
   assert(agent, "The agent this suggestion targets disappeared.");
@@ -170,6 +180,7 @@ async function resolveAgentStep(
   const change = await resolveAgentSuggestions(auth, {
     agent,
     suggestions: step.suggestions,
+    createdInBatch,
   });
   if (change.isErr()) {
     return change;
@@ -184,19 +195,48 @@ async function resolveStep(
   {
     agentsById,
     skillsById,
+    createdInBatch,
   }: {
     agentsById: Map<string, AgentResource>;
     skillsById: Map<string, SkillResource>;
+    createdInBatch: BatchCreations;
   }
 ): Promise<Result<ResolvedStep, ApplyBatchSuggestionsError>> {
   switch (step.type) {
     case "skill":
       return resolveSkillStep(auth, step, skillsById);
     case "agent":
-      return resolveAgentStep(auth, step, agentsById);
+      return resolveAgentStep(auth, step, { agentsById, createdInBatch });
     default:
       return assertNever(step);
   }
+}
+
+function listBatchCreations(steps: BatchApplicationStep[]): BatchCreations {
+  const skillIds = new Set<string>();
+  const agentById: BatchCreations["agentById"] = new Map();
+  for (const step of steps.filter((step) => step.action === "create")) {
+    switch (step.type) {
+      case "skill":
+        skillIds.add(step.skillId);
+        break;
+      case "agent": {
+        const [creation] = step.suggestions
+          .map((suggestion) => suggestion.toJSON())
+          .filter(isCreateAgentSuggestion);
+        if (creation) {
+          agentById.set(step.agentId, {
+            sId: step.agentId,
+            name: creation.suggestion.name,
+          });
+        }
+        break;
+      }
+      default:
+        assertNever(step);
+    }
+  }
+  return { skillIds, agentById };
 }
 
 async function applyStep(
@@ -236,6 +276,13 @@ async function applyStep(
  * - and then we apply the step.
  * If any of the checks fails, the batch application is aborted and no step is applied.
  */
+/**
+ * @cc [owner:achilleburah,label:security;product] batch-creations-added-while-pending
+ * An agent change of the batch MAY add a skill or a sub-agent that is still `pending` only when the
+ * same batch creates it: its creation step is authorized and checked with the batch, and is written
+ * before the change that adds it. Every other added skill or sub-agent is checked against live
+ * state, as outside a batch.
+ */
 export async function applyBatchSuggestions(
   auth: Authenticator,
   batch: BatchSuggestionResource
@@ -267,9 +314,14 @@ export async function applyBatchSuggestions(
     }
   }
 
+  const createdInBatch = listBatchCreations(steps);
   const resolvedSteps: ResolvedStep[] = [];
   for (const step of steps) {
-    const res = await resolveStep(auth, step, { agentsById, skillsById });
+    const res = await resolveStep(auth, step, {
+      agentsById,
+      skillsById,
+      createdInBatch,
+    });
     if (res.isErr()) {
       return res;
     }

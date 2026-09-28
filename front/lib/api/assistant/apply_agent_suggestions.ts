@@ -82,6 +82,12 @@ export type ResolvedAgentChange =
     }
   | { type: "delete"; agentId: string };
 
+/** The skills and agents a batch creates, still `pending` while its changes are resolved. */
+export interface BatchCreations {
+  skillIds: Set<string>;
+  agentById: Map<string, { sId: string; name: string }>;
+}
+
 function pickDefaultAvatar(): string {
   return DROID_AVATAR_URLS[
     Math.floor(Math.random() * DROID_AVATAR_URLS.length)
@@ -106,7 +112,8 @@ async function resolveCreateSuggestion(
     instructions,
     toolIds = [],
     skillIds = [],
-  }: CreateSuggestionType
+  }: CreateSuggestionType,
+  createdInBatch: BatchCreations
 ): Promise<Result<ResolvedAgentChange, ApplyAgentSuggestionsError>> {
   if (agent.status !== "pending") {
     return new Err(
@@ -148,7 +155,8 @@ async function resolveCreateSuggestion(
   const resolvedSkills = await resolveSkillsEdits(
     auth,
     [],
-    skillIds.map((skillId) => ({ action: "add", skillId }))
+    skillIds.map((skillId) => ({ action: "add", skillId })),
+    createdInBatch.skillIds
   );
   if (resolvedSkills.isErr()) {
     return resolvedSkills;
@@ -332,7 +340,13 @@ async function resolveSubAgentsEdits(
   auth: Authenticator,
   currentActions: AgentActionPayload[],
   subAgents: SubAgentSuggestionType[],
-  { agentId }: { agentId: string }
+  {
+    agentId,
+    createdAgentById,
+  }: {
+    agentId: string;
+    createdAgentById: BatchCreations["agentById"];
+  }
 ): Promise<
   Result<
     { actions: AgentActionPayload[]; hasRemovedSubAgents: boolean },
@@ -378,9 +392,10 @@ async function resolveSubAgentsEdits(
       ...addedSubAgentIds,
     ]);
     for (const subAgentId of addedSubAgentIds) {
-      const addition = checkSubAgentAddition(subAgentId, suggestable, {
-        agentId,
-      });
+      const createdAgent = createdAgentById.get(subAgentId);
+      const addition = createdAgent
+        ? new Ok(createdAgent)
+        : checkSubAgentAddition(subAgentId, suggestable, { agentId });
       if (addition.isErr()) {
         return new Err(new DustError("invalid_request_error", addition.error));
       }
@@ -407,7 +422,8 @@ async function resolveSubAgentsEdits(
 async function resolveSkillsEdits(
   auth: Authenticator,
   currentSkills: SkillResource[],
-  skills: SkillsSuggestionType[]
+  skills: SkillsSuggestionType[],
+  createdSkillIds: Set<string>
 ): Promise<
   Result<
     { skillIds: string[]; hasRemovedSkills: boolean },
@@ -429,6 +445,9 @@ async function resolveSkillsEdits(
 
   const suggestable = await fetchSuggestableSkills(auth, [...addedSkillIds]);
   for (const skillId of addedSkillIds) {
+    if (createdSkillIds.has(skillId)) {
+      continue;
+    }
     const addition = checkSkillAddition(skillId, suggestable);
     if (addition.isErr()) {
       return new Err(new DustError("invalid_request_error", addition.error));
@@ -496,7 +515,8 @@ async function resolveAgentFieldEdits(
     skills,
     tools,
     subAgents,
-  }: AgentEdits
+  }: AgentEdits,
+  createdInBatch: BatchCreations
 ): Promise<
   Result<AgentConfigurationAssistantPayload, ApplyAgentSuggestionsError>
 > {
@@ -526,7 +546,8 @@ async function resolveAgentFieldEdits(
   const resolvedSkills = await resolveSkillsEdits(
     auth,
     currentSkills,
-    skills ?? []
+    skills ?? [],
+    createdInBatch.skillIds
   );
   if (resolvedSkills.isErr()) {
     return resolvedSkills;
@@ -544,7 +565,7 @@ async function resolveAgentFieldEdits(
     auth,
     resolvedActions.value.actions,
     subAgents ?? [],
-    { agentId: agent.sId }
+    { agentId: agent.sId, createdAgentById: createdInBatch.agentById }
   );
   if (resolvedToolsWithSubAgents.isErr()) {
     return resolvedToolsWithSubAgents;
@@ -636,7 +657,8 @@ function hasAgentFieldEdits({
 async function resolveAgentEdits(
   auth: Authenticator,
   agent: AgentResource,
-  edits: AgentEdits
+  edits: AgentEdits,
+  createdInBatch: BatchCreations
 ): Promise<Result<ResolvedAgentChange, ApplyAgentSuggestionsError>> {
   if (agent.scope === "global" || agent.status !== "active") {
     return new Err(
@@ -657,7 +679,12 @@ async function resolveAgentEdits(
   // must not.
   let assistant: AgentConfigurationAssistantPayload | null = null;
   if (hasAgentFieldEdits(edits)) {
-    const assistantRes = await resolveAgentFieldEdits(auth, agent, edits);
+    const assistantRes = await resolveAgentFieldEdits(
+      auth,
+      agent,
+      edits,
+      createdInBatch
+    );
     if (assistantRes.isErr()) {
       return assistantRes;
     }
@@ -695,9 +722,11 @@ export async function resolveAgentSuggestions(
   {
     agent,
     suggestions,
+    createdInBatch,
   }: {
     agent: AgentResource;
     suggestions: AgentSuggestionResource[];
+    createdInBatch: BatchCreations;
   }
 ): Promise<Result<ResolvedAgentChange, ApplyAgentSuggestionsError>> {
   const actions = new Set(
@@ -732,14 +761,19 @@ export async function resolveAgentSuggestions(
           )
         );
       }
-      return resolveCreateSuggestion(auth, agent, parsed.data.suggestion);
+      return resolveCreateSuggestion(
+        auth,
+        agent,
+        parsed.data.suggestion,
+        createdInBatch
+      );
     }
     case "edit": {
       const edits = mergeAgentEdits(suggestions);
       if (edits.isErr()) {
         return edits;
       }
-      return resolveAgentEdits(auth, agent, edits.value);
+      return resolveAgentEdits(auth, agent, edits.value, createdInBatch);
     }
     case "delete":
       return resolveDeleteSuggestion(agent);
