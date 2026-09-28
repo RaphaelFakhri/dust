@@ -1,3 +1,4 @@
+import { UserLocaleSync } from "@dust-tt/front/components/app/UserLocaleSync";
 import { ProfileOnboardingDialog } from "@dust-tt/front/components/onboarding/ProfileOnboardingDialog";
 import { AppAuthContextLayout } from "@dust-tt/front/components/sparkle/AppAuthContextLayout";
 import { computeIsMetronomeCheckout } from "@dust-tt/front/lib/client/subscription";
@@ -71,6 +72,7 @@ export function WorkspacePage({ children }: WorkspacePageProps) {
 
   return (
     <AppAuthContextLayout authContext={authContext}>
+      <UserLocaleSync />
       {isMetronomeCheckout && isRequireCanUseProduct && (
         <ProfileOnboardingDialog />
       )}
