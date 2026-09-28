@@ -23,7 +23,7 @@ import { getAgentBuilderRoute } from "@app/lib/utils/router";
 import type {
   AgentConfigurationScope,
   AgentUsageType,
-  LightAgentConfigurationType,
+  DecoratedLightAgentConfigurationType,
 } from "@app/types/assistant/agent";
 import { isModelStreamId } from "@app/types/assistant/models/auto";
 import { getTieredReasoningEffort } from "@app/types/assistant/models/model_tiers";
@@ -578,10 +578,10 @@ const getTableColumns = ({
 
 type AssistantsTableProps = {
   owner: WorkspaceType;
-  agents: LightAgentConfigurationType[];
+  agents: DecoratedLightAgentConfigurationType[];
   setDetailedAgentId: (sId: string) => void;
   handleToggleAgentStatus: (
-    agent: LightAgentConfigurationType
+    agent: DecoratedLightAgentConfigurationType
   ) => Promise<void>;
   showDisabledFreeWorkspacePopup: string | null;
   setShowDisabledFreeWorkspacePopup: (s: string | null) => void;
@@ -635,7 +635,7 @@ export function AssistantsTable({
 
   const [showDeleteDialog, setShowDeleteDialog] = useState<{
     open: boolean;
-    agentConfiguration: LightAgentConfigurationType | undefined;
+    agentConfiguration: DecoratedLightAgentConfigurationType | undefined;
   }>({
     open: false,
     agentConfiguration: undefined,

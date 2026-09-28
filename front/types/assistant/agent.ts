@@ -247,13 +247,17 @@ export type AgentActionsEnrichment = z.infer<
 // query flags (getAgentsUsage / feedback counts / getAgentsEditors / getAgentsRecentAuthors). The
 // resource builders do NOT produce them: they need request context the builders don't have — a Redis
 // handle and a page `limit` (usage), a feedback time window (feedbacks), per-user "Me" rendering
-// (authors). They live in the wire type only because a route may add them. --
+// (authors). They are declared only on the response types of the routes that add them
+// (`DecoratedLightAgentConfigurationType`, `AgentConfigurationWithLastAuthorsType`). --
 export const AgentConfigurationDecorationsSchema = z.object({
   usage: AgentUsageSchema.optional(),
   feedbacks: z.object({ up: z.number(), down: z.number() }).optional(),
   editors: z.array(UserSchema).optional(),
   lastAuthors: z.array(z.string()).readonly().optional(),
 });
+export type AgentConfigurationDecorations = z.infer<
+  typeof AgentConfigurationDecorationsSchema
+>;
 
 // The full-only delta over light: `instructionsHtml` (from content) + `actions` + `codeDefinedSkillIds`.
 export const AgentConfigurationFullFieldsSchema =
@@ -263,16 +267,13 @@ export const AgentConfigurationFullFieldsSchema =
     codeDefinedSkillIds: z.array(z.string()).optional(),
   });
 
-// Light = base + the builder enrichments the light builder produces (favorite, tags) + the optional
-// route decorations.
+// Light = base + the builder enrichments the light builder produces (favorite, tags).
 export const LightAgentConfigurationSchema = AgentConfigurationBaseSchema.merge(
   AgentFavoriteEnrichmentSchema
-)
-  .merge(AgentTagsEnrichmentSchema)
-  .merge(AgentConfigurationDecorationsSchema);
+).merge(AgentTagsEnrichmentSchema);
 
 /**
- * @swaggerschema AgentConfiguration (swagger_schemas.ts), PrivateLightAgentConfiguration (swagger_private_schemas.ts)
+ * @swaggerschema AgentConfiguration (swagger_schemas.ts)
  */
 export type LightAgentConfigurationType = z.infer<
   typeof LightAgentConfigurationSchema
@@ -284,6 +285,20 @@ export const AgentConfigurationSchema = LightAgentConfigurationSchema.merge(
 );
 
 export type AgentConfigurationType = z.infer<typeof AgentConfigurationSchema>;
+
+// What the agent list route returns: light configurations with the route decorations it adds.
+export const DecoratedLightAgentConfigurationSchema =
+  LightAgentConfigurationSchema.merge(AgentConfigurationDecorationsSchema);
+/**
+ * @swaggerschema PrivateLightAgentConfiguration (swagger_private_schemas.ts)
+ */
+export type DecoratedLightAgentConfigurationType = z.infer<
+  typeof DecoratedLightAgentConfigurationSchema
+>;
+
+// What the agent details route returns.
+export type AgentConfigurationWithLastAuthorsType = AgentConfigurationType &
+  Pick<AgentConfigurationDecorations, "lastAuthors">;
 
 /**
  * An agent configuration with its attached skills resolved, which is what the API serializes.

@@ -23,16 +23,16 @@ import {
   subFilter,
   tagsSorter,
 } from "@app/lib/utils";
-import type { LightAgentConfigurationType } from "@app/types/assistant/agent";
+import type { DecoratedLightAgentConfigurationType } from "@app/types/assistant/agent";
 import { compareAgentsForSort } from "@app/types/assistant/assistant";
 import type { UserType, WorkspaceType } from "@app/types/user";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface AssistantBrowserProps {
   owner: WorkspaceType;
-  agentConfigurations: LightAgentConfigurationType[];
+  agentConfigurations: DecoratedLightAgentConfigurationType[];
   isLoading: boolean;
-  handleAgentClick: (agent: LightAgentConfigurationType) => void;
+  handleAgentClick: (agent: DecoratedLightAgentConfigurationType) => void;
   user: UserType;
 }
 
@@ -62,7 +62,10 @@ export function AgentBrowser({
     usePersistedAgentBrowserSelection(owner.sId);
 
   const sortAgents = useCallback(
-    (a: LightAgentConfigurationType, b: LightAgentConfigurationType) => {
+    (
+      a: DecoratedLightAgentConfigurationType,
+      b: DecoratedLightAgentConfigurationType
+    ) => {
       if (sortType === "popularity") {
         return (
           (b.usage?.messageCount ?? 0) - (a.usage?.messageCount ?? 0) ||
@@ -82,9 +85,8 @@ export function AgentBrowser({
   );
 
   const agentsByTab: AgentsByTab = useMemo(() => {
-    const allAgents: LightAgentConfigurationType[] = agentConfigurations
-      .filter((a) => a.status === "active")
-      .sort(sortAgents);
+    const allAgents: DecoratedLightAgentConfigurationType[] =
+      agentConfigurations.filter((a) => a.status === "active").sort(sortAgents);
 
     return {
       // do not show the "all" tab while still loading all agents
@@ -120,24 +122,25 @@ export function AgentBrowser({
       }
       const search = assistantSearch.toLowerCase().trim().replace(/^@/, "");
 
-      const filteredAgents: LightAgentConfigurationType[] = agentConfigurations
-        .filter(
-          (a) =>
-            a.status === "active" &&
-            // Filters on search query
-            subFilter(search, getAgentSearchString(a))
-        )
-        .sort((a, b) => {
-          return (
-            compareForFuzzySort(
-              assistantSearch.toLowerCase(),
-              getAgentSearchString(a),
-              getAgentSearchString(b)
-            ) ||
-            (b.usage?.messageCount ?? 0) - (a.usage?.messageCount ?? 0) ||
-            compareAgentsForSort(a, b)
-          );
-        });
+      const filteredAgents: DecoratedLightAgentConfigurationType[] =
+        agentConfigurations
+          .filter(
+            (a) =>
+              a.status === "active" &&
+              // Filters on search query
+              subFilter(search, getAgentSearchString(a))
+          )
+          .sort((a, b) => {
+            return (
+              compareForFuzzySort(
+                assistantSearch.toLowerCase(),
+                getAgentSearchString(a),
+                getAgentSearchString(b)
+              ) ||
+              (b.usage?.messageCount ?? 0) - (a.usage?.messageCount ?? 0) ||
+              compareAgentsForSort(a, b)
+            );
+          });
 
       const filteredTags =
         selectedTag === ALL_TAG.sId
