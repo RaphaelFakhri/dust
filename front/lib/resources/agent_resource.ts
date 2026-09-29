@@ -166,16 +166,11 @@ const VISIBLE_AGENT_ROLE_GRANTS: RoleGrant[] = [
   { role: "none", permissions: ["read"] },
 ];
 
-// Full-only payload: every `AgentConfigurationModel` column that is not part of the identity/core
-// carried by both shapes. Present only on `full` resources (see `AgentResource` variants).
+// Full-only payload: the private `AgentConfigurationModel` columns. Present only on `full`
+// resources (see `AgentResource` variants).
 export type AgentResourceContent = {
-  version: number;
   instructions: string | null;
   instructionsHtml: string | null;
-  maxStepsPerRun: number;
-  creditSpendCheckpointThresholdAwuCredits: number | null;
-  createdAt: Date;
-  updatedAt: Date;
 };
 
 // The outcome of a `bulkUpdate`: the agents whose save succeeded (`updatedAgentIds`, a change
@@ -291,15 +286,6 @@ type SerializedModelConfiguration = {
   responseFormat: string | null;
 };
 
-// JSON-serializable form of `AgentResourceContent`: Date columns become epoch millis.
-type SerializedAgentResourceContent = Omit<
-  AgentResourceContent,
-  "createdAt" | "updatedAt"
-> & {
-  createdAt: number;
-  updatedAt: number;
-};
-
 // Cached shape of a `full` custom `AgentResource`. Hand-written (the resource spans two tables and
 // reshapes columns), so `AGENT_RESOURCE_CACHE_VERSION` MUST be bumped on any change; a test asserts
 // its `content` stays in sync with `AgentResourceContent`.
@@ -308,7 +294,7 @@ export type AgentResourceSnapshot = {
   agentConfigurationModelId: ModelId;
   workspaceId: ModelId;
   sId: string;
-  // The agent row's `createdAt` (epoch millis). Distinct from `content.createdAt`, which is the
+  // The agent row's `createdAt` (epoch millis). Distinct from `versionCreatedAt`, which is the
   // configuration version's timestamp — `agents.createdAt` is independent since it is backfilled.
   createdAt: number;
   scope: AgentConfigurationScope;
@@ -322,7 +308,12 @@ export type AgentResourceSnapshot = {
   versionAuthorId: ModelId | null;
   requestedSpaceIds: ModelId[];
   modelConfiguration: SerializedModelConfiguration;
-  content: SerializedAgentResourceContent;
+  version: number;
+  maxStepsPerRun: number;
+  creditSpendCheckpointThresholdAwuCredits: number | null;
+  versionCreatedAt: number;
+  versionUpdatedAt: number;
+  content: AgentResourceContent;
 };
 
 // Rollout mode for the agent read cache. Progression: "dryRun" (wired end to end but touching no
@@ -345,6 +336,11 @@ export interface AgentResource
   readonly reinforcement: AgentReinforcementMode;
   readonly versionAuthorId: ModelId | null;
   readonly modelConfiguration: AgentModelConfigurationType;
+  readonly version: number;
+  readonly maxStepsPerRun: number;
+  readonly creditSpendCheckpointThresholdAwuCredits: number | null;
+  readonly versionCreatedAt: Date;
+  readonly versionUpdatedAt: Date;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -439,12 +435,6 @@ export class AgentResource
 {
   private readonly requestedSpaceIds: ModelId[];
   private _codeDefinedSkillIds: string[] = [];
-  // The configuration version's metadata: not private, so kept on `light` resources too (only the
-  // instructions are private, see `unreadable-agent-is-light`).
-  private readonly versionInfo: Omit<
-    AgentResourceContent,
-    "instructions" | "instructionsHtml"
-  >;
   private _content: AgentResourceContent | null;
 
   private _verbs: Set<GrantVerb> = new Set();
@@ -476,6 +466,12 @@ export class AgentResource
         reasoningEffort: agentConfiguration.reasoningEffort ?? undefined,
         responseFormat: agentConfiguration.responseFormat ?? undefined,
       },
+      version: agentConfiguration.version,
+      maxStepsPerRun: agentConfiguration.maxStepsPerRun,
+      creditSpendCheckpointThresholdAwuCredits:
+        agentConfiguration.creditSpendCheckpointThresholdAwuCredits,
+      versionCreatedAt: agentConfiguration.createdAt,
+      versionUpdatedAt: agentConfiguration.updatedAt,
     } satisfies Pick<
       AgentResource,
       | "agentConfigurationModelId"
@@ -489,25 +485,16 @@ export class AgentResource
       | "lastReinforcementAnalysisAt"
       | "versionAuthorId"
       | "modelConfiguration"
+      | "version"
+      | "maxStepsPerRun"
+      | "creditSpendCheckpointThresholdAwuCredits"
+      | "versionCreatedAt"
+      | "versionUpdatedAt"
     >);
     this.requestedSpaceIds = agentConfiguration.requestedSpaceIds;
-    this.versionInfo = {
-      version: agentConfiguration.version,
-      maxStepsPerRun: agentConfiguration.maxStepsPerRun,
-      creditSpendCheckpointThresholdAwuCredits:
-        agentConfiguration.creditSpendCheckpointThresholdAwuCredits,
-      createdAt: agentConfiguration.createdAt,
-      updatedAt: agentConfiguration.updatedAt,
-    };
     this._content = {
-      version: agentConfiguration.version,
       instructions: agentConfiguration.instructions,
       instructionsHtml: agentConfiguration.instructionsHtml,
-      maxStepsPerRun: agentConfiguration.maxStepsPerRun,
-      creditSpendCheckpointThresholdAwuCredits:
-        agentConfiguration.creditSpendCheckpointThresholdAwuCredits,
-      createdAt: agentConfiguration.createdAt,
-      updatedAt: agentConfiguration.updatedAt,
     };
   }
 
@@ -1156,11 +1143,13 @@ export class AgentResource
         reasoningEffort: modelConfiguration.reasoningEffort ?? null,
         responseFormat: modelConfiguration.responseFormat ?? null,
       },
-      content: {
-        ...content,
-        createdAt: content.createdAt.getTime(),
-        updatedAt: content.updatedAt.getTime(),
-      },
+      version: this.version,
+      maxStepsPerRun: this.maxStepsPerRun,
+      creditSpendCheckpointThresholdAwuCredits:
+        this.creditSpendCheckpointThresholdAwuCredits,
+      versionCreatedAt: this.versionCreatedAt.getTime(),
+      versionUpdatedAt: this.versionUpdatedAt.getTime(),
+      content: { ...content },
     };
   }
 
@@ -1190,9 +1179,9 @@ export class AgentResource
         sId: snapshot.sId,
         createdAt: new Date(snapshot.createdAt),
         // `updatedAt` is not surfaced on the resource; the version's stands in harmlessly.
-        updatedAt: new Date(content.updatedAt),
+        updatedAt: new Date(snapshot.versionUpdatedAt),
         // The cached row is the current version, so its version is the agent's `currentVersion`.
-        currentVersion: content.version,
+        currentVersion: snapshot.version,
         name: null,
         status: null,
         scope: null,
@@ -1204,9 +1193,9 @@ export class AgentResource
         id: snapshot.agentConfigurationModelId,
         workspaceId: snapshot.workspaceId,
         sId: snapshot.sId,
-        createdAt: new Date(content.createdAt),
-        updatedAt: new Date(content.updatedAt),
-        version: content.version,
+        createdAt: new Date(snapshot.versionCreatedAt),
+        updatedAt: new Date(snapshot.versionUpdatedAt),
+        version: snapshot.version,
         agentId: snapshot.agentModelId,
         status: snapshot.status,
         scope: snapshot.scope,
@@ -1221,9 +1210,9 @@ export class AgentResource
         responseFormat: modelConfiguration.responseFormat ?? undefined,
         pictureUrl: snapshot.pictureUrl,
         authorId: snapshot.versionAuthorId,
-        maxStepsPerRun: content.maxStepsPerRun,
+        maxStepsPerRun: snapshot.maxStepsPerRun,
         creditSpendCheckpointThresholdAwuCredits:
-          content.creditSpendCheckpointThresholdAwuCredits,
+          snapshot.creditSpendCheckpointThresholdAwuCredits,
         templateId: snapshot.templateId,
         reinforcement: snapshot.reinforcement,
         lastReinforcementAnalysisAt,
@@ -1851,7 +1840,7 @@ export class AgentResource
       authorId: this.versionAuthorId ?? auth.getNonNullableUser().id,
       reinforcement: this.reinforcement,
       ignoreCreditSpendThresholdAlert:
-        this.content.creditSpendCheckpointThresholdAwuCredits === null,
+        this.creditSpendCheckpointThresholdAwuCredits === null,
       actions,
       skills,
     };
@@ -2816,19 +2805,13 @@ export class AgentResource
    */
   toJSON(): AgentConfigurationBaseType {
     const isGlobal = this.scope === "global";
-    const {
-      version,
-      maxStepsPerRun,
-      createdAt,
-      creditSpendCheckpointThresholdAwuCredits,
-    } = this.versionInfo;
 
     return {
       id: this.agentConfigurationModelId,
       agentModelId: isGlobal ? null : this.id,
-      versionCreatedAt: isGlobal ? null : createdAt.toISOString(),
+      versionCreatedAt: isGlobal ? null : this.versionCreatedAt.toISOString(),
       sId: this.sId,
-      version,
+      version: this.version,
       versionAuthorId: this.versionAuthorId,
       instructions: this._content?.instructions ?? null,
       model: this.modelConfiguration,
@@ -2837,7 +2820,7 @@ export class AgentResource
       name: this.name,
       description: this.description,
       pictureUrl: this.pictureUrl,
-      maxStepsPerRun,
+      maxStepsPerRun: this.maxStepsPerRun,
       templateId: this.templateId
         ? TemplateResource.modelIdToSId({ id: this.templateId })
         : null,
@@ -2855,7 +2838,7 @@ export class AgentResource
       lastReinforcementAnalysisAt:
         this.lastReinforcementAnalysisAt?.toISOString() ?? null,
       ignoreCreditSpendThresholdAlert:
-        creditSpendCheckpointThresholdAwuCredits === null,
+        this.creditSpendCheckpointThresholdAwuCredits === null,
       canRead: this._verbs.has("read"),
       // Regular API keys hold `write` from the admin role but may only edit an active version
       // (see the `regular-key-agent-editability` contract on `enrichAgentConfigurations`).
