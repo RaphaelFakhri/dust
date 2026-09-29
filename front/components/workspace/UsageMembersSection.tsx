@@ -58,7 +58,7 @@ export function UsageMembersSection({
           {requests && (
             <ButtonsSwitchList
               size="xs"
-              defaultValue="members"
+              value={activeTab}
               onValueChange={(value: string) =>
                 requests.onTabChange(
                   value === "requests" ? "requests" : "members"
