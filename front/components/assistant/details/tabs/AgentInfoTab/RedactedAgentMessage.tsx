@@ -4,6 +4,7 @@ import { useAuth } from "@app/lib/auth/AuthContext";
 import { useUpdateEditors } from "@app/lib/swr/agent_editors";
 import { useAgentConfiguration } from "@app/lib/swr/assistants";
 import {
+  REQUESTABLE_SPACE_KINDS,
   useAddSpaceMembers,
   useSpaces,
   useSpacesAsAdmin,
@@ -28,7 +29,10 @@ export function RedactedAgentMessage({
     workspaceId: owner.sId,
     kinds: "all",
   });
-  const { spaces: allSpaces } = useSpacesAsAdmin({ workspaceId: owner.sId });
+  const { spaces: allSpaces } = useSpacesAsAdmin({
+    workspaceId: owner.sId,
+    kinds: REQUESTABLE_SPACE_KINDS,
+  });
   const { user } = useAuth();
   const updateEditors = useUpdateEditors({
     owner,

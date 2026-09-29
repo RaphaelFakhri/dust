@@ -5,6 +5,7 @@ import {
   useSkillsWithRelations,
 } from "@app/lib/swr/skill_configurations";
 import {
+  REQUESTABLE_SPACE_KINDS,
   useAddSpaceMembers,
   useSpaces,
   useSpacesAsAdmin,
@@ -29,7 +30,10 @@ export function RedactedSkillMessage({
     workspaceId: owner.sId,
     kinds: "all",
   });
-  const { spaces: allSpaces } = useSpacesAsAdmin({ workspaceId: owner.sId });
+  const { spaces: allSpaces } = useSpacesAsAdmin({
+    workspaceId: owner.sId,
+    kinds: REQUESTABLE_SPACE_KINDS,
+  });
   const { user } = useAuth();
   const addSpaceMembers = useAddSpaceMembers({ owner });
   const { mutateSkillRegardlessOfQueryParams: mutateSkill } = useSkill({
