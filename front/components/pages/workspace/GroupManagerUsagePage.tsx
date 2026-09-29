@@ -1,7 +1,10 @@
+import { ConfirmContext } from "@app/components/Confirm";
 import { AdminPageContainer } from "@app/components/layouts/AdminPageContainer";
 import { EditMemberSpendLimitModal } from "@app/components/workspace/EditMemberSpendLimitModal";
 import { GroupsUsageTable } from "@app/components/workspace/GroupsUsageTable";
 import { MembersUsageTable } from "@app/components/workspace/MembersUsageTable";
+import { UpgradeRequestLimitModal } from "@app/components/workspace/UpgradeRequestLimitModal";
+import { UpgradeRequestsTable } from "@app/components/workspace/UpgradeRequestsTable";
 import { UsageMembersSection } from "@app/components/workspace/UsageMembersSection";
 import type { DefaultUserSpendLimitState } from "@app/components/workspace/WorkspaceDefaultLimitInput";
 import type { MemberUsageType } from "@app/lib/api/credits/members_usage";
@@ -9,8 +12,14 @@ import { useAuth, useWorkspace } from "@app/lib/auth/AuthContext";
 import { isFreePlan } from "@app/lib/plans/plan_codes";
 import { useGroups } from "@app/lib/swr/groups";
 import { useMembersUsage } from "@app/lib/swr/memberships";
+import {
+  useResolveUpgradeRequest,
+  useUpgradeRequests,
+} from "@app/lib/swr/upgrade_requests";
+import type { MembershipUpgradeRequestType } from "@app/types/memberships";
 import { isCreditPricedPlan } from "@app/types/plan";
 import {
+  ContentMessage,
   Page,
   Tabs,
   TabsContent,
@@ -18,7 +27,7 @@ import {
   TabsTrigger,
 } from "@dust-tt/sparkle";
 import type { PaginationState, SortingState } from "@tanstack/react-table";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 
 const EMPTY_IDS = new Set<string>();
 const NOOP_MEMBER_ACTION = (_member: MemberUsageType) => {};
@@ -27,6 +36,14 @@ export function GroupManagerUsagePage() {
   const owner = useWorkspace();
   const { subscription, groupManagement } = useAuth();
   const [tab, setTab] = useState<"members" | "groups">("members");
+  const [membersTab, setMembersTab] = useState<"members" | "requests">(
+    "members"
+  );
+  const [requestToEdit, setRequestToEdit] =
+    useState<MembershipUpgradeRequestType | null>(null);
+  const [resolvingRequestIds, setResolvingRequestIds] =
+    useState<ReadonlySet<string>>(EMPTY_IDS);
+  const confirm = useContext(ConfirmContext);
   const [searchTerm, setSearchTerm] = useState("");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -100,9 +117,49 @@ export function GroupManagerUsagePage() {
         : "name",
     orderDirection: sort?.desc ? "desc" : "asc",
     groupId: groupId ?? undefined,
-    disabled: tab !== "members",
+    disabled: tab !== "members" || membersTab !== "members",
   });
   const isCreditPriced = isCreditPricedPlan(subscription.plan);
+  const canHandleRequests = isCreditPriced && editableGroupIds.size > 0;
+  const { upgradeRequests, isUpgradeRequestsLoading, isUpgradeRequestsError } =
+    useUpgradeRequests({
+      workspaceId: owner.sId,
+      groupId: groupId ?? undefined,
+      searchTerm,
+      disabled: !canHandleRequests,
+    });
+  const { doResolveUpgradeRequest } = useResolveUpgradeRequest({
+    workspaceId: owner.sId,
+  });
+
+  async function resolveRequest(
+    request: MembershipUpgradeRequestType,
+    status: "approved" | "denied"
+  ) {
+    if (
+      status === "denied" &&
+      !(await confirm({
+        title: "Deny upgrade request",
+        message: `Deny ${request.requester.name}'s request to increase their spend limit?`,
+        validateLabel: "Deny",
+        validateVariant: "warning",
+      }))
+    ) {
+      return;
+    }
+    setResolvingRequestIds((current) => new Set([...current, request.sId]));
+    try {
+      await doResolveUpgradeRequest({
+        requestId: request.sId,
+        requesterName: request.requester.name,
+        status,
+      });
+    } finally {
+      setResolvingRequestIds(
+        (current) => new Set([...current].filter((id) => id !== request.sId))
+      );
+    }
+  }
   // The effective limit already includes the seat allowance. Show the
   // inherited workspace default when it is the active source, without calling
   // the workspace-only default-limit endpoint.
@@ -151,6 +208,31 @@ export function GroupManagerUsagePage() {
                 setPagination((current) => ({ ...current, pageIndex: 0 }));
               }}
               allGroupsLabel="All managed groups"
+              requests={
+                canHandleRequests
+                  ? {
+                      count: upgradeRequests.length,
+                      activeTab: membersTab,
+                      onTabChange: setMembersTab,
+                      table: isUpgradeRequestsError ? (
+                        <ContentMessage variant="warning">
+                          Could not load requests. Refresh the page to try
+                          again.
+                        </ContentMessage>
+                      ) : (
+                        <UpgradeRequestsTable
+                          requests={upgradeRequests}
+                          isLoading={isUpgradeRequestsLoading}
+                          pendingRequestIds={resolvingRequestIds}
+                          onEditLimit={setRequestToEdit}
+                          onDeny={(request) =>
+                            void resolveRequest(request, "denied")
+                          }
+                        />
+                      ),
+                    }
+                  : undefined
+              }
               membersTable={
                 <MembersUsageTable
                   members={membersUsage}
@@ -194,6 +276,17 @@ export function GroupManagerUsagePage() {
             />
           </TabsContent>
         </Tabs>
+        {requestToEdit && (
+          <UpgradeRequestLimitModal
+            key={requestToEdit.sId}
+            owner={owner}
+            request={requestToEdit}
+            groups={groups}
+            editableGroupIds={editableGroupIds}
+            onClose={() => setRequestToEdit(null)}
+            onSaved={() => void resolveRequest(requestToEdit, "approved")}
+          />
+        )}
         <EditMemberSpendLimitModal
           isOpen={selectedMember !== null}
           onClose={() => setSelectedMember(null)}

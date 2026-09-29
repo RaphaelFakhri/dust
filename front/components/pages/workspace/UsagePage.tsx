@@ -363,24 +363,9 @@ export function UsagePage() {
   const { upgradeRequests, isUpgradeRequestsLoading } = useUpgradeRequests({
     workspaceId: owner.sId,
     disabled: !isCreditPriced,
+    searchTerm,
+    groupId: groupFilter ?? undefined,
   });
-
-  const filteredUpgradeRequests = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return upgradeRequests.filter((request) => {
-      if (request.status !== "pending") {
-        return false;
-      }
-      if (!normalizedSearch) {
-        return true;
-      }
-      const { name, email } = request.requester;
-      return (
-        name.toLowerCase().includes(normalizedSearch) ||
-        (email?.toLowerCase().includes(normalizedSearch) ?? false)
-      );
-    });
-  }, [upgradeRequests, searchTerm]);
   const { doResolveUpgradeRequest } = useResolveUpgradeRequest({
     workspaceId: owner.sId,
   });
@@ -1350,12 +1335,12 @@ export function UsagePage() {
                 requests={
                   isCreditPriced
                     ? {
-                        count: filteredUpgradeRequests.length,
+                        count: upgradeRequests.length,
                         activeTab: membersTab,
                         onTabChange: setMembersTab,
                         table: (
                           <UpgradeRequestsTable
-                            requests={filteredUpgradeRequests}
+                            requests={upgradeRequests}
                             isLoading={isUpgradeRequestsLoading}
                             seatPlans={seatPlans}
                             pendingRequestIds={resolvingRequestIds}
