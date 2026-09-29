@@ -4,6 +4,7 @@ import { useUserMetadata } from "@app/lib/swr/user";
 import type { SupportedLocale } from "@app/types/locale";
 import { isSupportedLocale, USER_LOCALE_METADATA_KEY } from "@app/types/locale";
 import type { LightWorkspaceType } from "@app/types/user";
+import { useLingui } from "@lingui/react/macro";
 import { useState } from "react";
 
 interface UseUserLocaleProps {
@@ -18,6 +19,7 @@ interface UseUserLocaleProps {
  * still loading, hook disabled, or a stored value that is not a supported locale.
  */
 export function useUserLocale({ owner, disabled }: UseUserLocaleProps) {
+  const { t } = useLingui();
   const sendNotification = useSendNotification();
   const [isSaving, setIsSaving] = useState(false);
   const { metadata, mutateMetadata } = useUserMetadata(
@@ -47,8 +49,8 @@ export function useUserLocale({ owner, disabled }: UseUserLocaleProps) {
       if (!response?.ok) {
         sendNotification({
           type: "error",
-          title: "Could not save the language",
-          description: "Your language could not be saved to your account.",
+          title: t`Could not save the language`,
+          description: t`Your language could not be saved to your account.`,
         });
         return false;
       }
